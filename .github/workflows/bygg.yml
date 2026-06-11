@@ -1,0 +1,47 @@
+name: Bygg PDF_To_Word_Converter (Windows-exe)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer Python-avhengigheter
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Installer Tesseract OCR
+        run: choco install tesseract --no-progress -y
+
+      - name: Pakk Tesseract med norsk språkstøtte
+        shell: pwsh
+        run: |
+          $src = "C:\Program Files\Tesseract-OCR"
+          New-Item -ItemType Directory -Force -Path tesseract\tessdata | Out-Null
+          Copy-Item "$src\tesseract.exe" tesseract\
+          Copy-Item "$src\*.dll" tesseract\
+          Copy-Item "$src\tessdata\eng.traineddata" tesseract\tessdata\
+          Copy-Item "$src\tessdata\osd.traineddata" tesseract\tessdata\ -ErrorAction SilentlyContinue
+          Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/nor.traineddata" -OutFile "tesseract\tessdata\nor.traineddata"
+
+      - name: Bygg exe
+        run: >
+          pyinstaller --onefile --windowed --name "PDF_To_Word_Converter"
+          --add-data "tesseract;tesseract"
+          --collect-data tkinterdnd2
+          app.py
+
+      - name: Last opp ferdig program
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF_To_Word_Converter-Windows
+          path: dist/PDF_To_Word_Converter.exe
+
