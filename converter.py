@@ -83,6 +83,7 @@ def kjor_ocr(pdf_inn: str, pdf_ut: str, status=lambda s: None,
             pix = kilde[i].get_pixmap(dpi=OCR_DPI)
             bilde = os.path.join(tmp, f"s{i}.png")
             pix.save(bilde)
+            del pix
 
             ut_base = os.path.join(tmp, f"s{i}")
             res = subprocess.run(
@@ -163,6 +164,63 @@ def bygg_docx_fra_ocr(ocr_pdf: str, docx_sti: str) -> None:
     word.save(docx_sti)
 
 
+def _normaliser(tekst: str) -> str:
+    """Normaliserer tekst for sammenligning: sidetall o.l. blir like."""
+    import re
+    t = " ".join(tekst.split()).lower()
+    return re.sub(r"\d+", "#", t)
+
+
+def fjern_topp_bunn(pdf_inn: str, pdf_ut: str, sone: float = 0.10) -> int:
+    """
+    Fjerner topp- og bunntekst: tekstblokker i øvre/nedre sone som gjentas
+    på tvers av sider, samt rene sidetall. Returnerer antall fjernede blokker.
+    """
+    import re
+    doc = fitz.open(pdf_inn)
+    antall_sider = len(doc)
+
+    # Tell forekomster av normalisert tekst i topp-/bunnsonene
+    forekomster: dict[str, int] = {}
+    kandidater = []  # (side_idx, bbox, nokkel, tekst)
+    for i, side in enumerate(doc):
+        h = side.rect.height
+        for blokk in side.get_text("blocks"):
+            x0, y0, x1, y1, tekst = blokk[0], blokk[1], blokk[2], blokk[3], blokk[4]
+            tekst = tekst.strip()
+            if not tekst:
+                continue
+            i_topp = y1 <= h * 0.08          # hele blokken i øverste 8 %
+            i_bunn = y0 >= h * 0.92          # hele blokken i nederste 8 %
+            liten = (y1 - y0) <= 40 and len(tekst) <= 150  # aldri overskrifter/avsnitt
+            if (i_topp or i_bunn) and liten:
+                nokkel = _normaliser(tekst)
+                forekomster[nokkel] = forekomster.get(nokkel, 0) + 1
+                kandidater.append((i, fitz.Rect(x0, y0, x1, y1), nokkel, tekst))
+
+    terskel = max(2, antall_sider // 2)
+    sidetall_monster = re.compile(r"^(side\s*)?\d+(\s*(av|/)\s*\d+)?$", re.IGNORECASE)
+
+    fjernet = 0
+    per_side: dict[int, list] = {}
+    for side_idx, bbox, nokkel, tekst in kandidater:
+        gjentatt = antall_sider >= 3 and forekomster[nokkel] >= terskel
+        sidetall = bool(sidetall_monster.match(" ".join(tekst.split())))
+        if gjentatt or sidetall:
+            per_side.setdefault(side_idx, []).append(bbox)
+            fjernet += 1
+
+    for side_idx, bokser in per_side.items():
+        side = doc[side_idx]
+        for bbox in bokser:
+            side.add_redact_annot(bbox)
+        side.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+
+    doc.save(pdf_ut, garbage=3)
+    doc.close()
+    return fjernet
+
+
 def ledig_filnavn(sti: str) -> str:
     """fil.docx -> fil (2).docx hvis den finnes fra før."""
     if not os.path.exists(sti):
@@ -175,8 +233,9 @@ def ledig_filnavn(sti: str) -> str:
 
 
 def konverter(pdf_sti: str, docx_sti: str | None = None,
-              status=lambda s: None, fremdrift=lambda p: None) -> dict:
-    """Hovedløp. Returnerer {'utfil': ..., 'ocr_brukt': bool}."""
+              status=lambda s: None, fremdrift=lambda p: None,
+              fjern_marger: bool = True) -> dict:
+    """Hovedløp. Returnerer {'utfil': ..., 'ocr_brukt': bool, 'fjernet_blokker': int}."""
     if not os.path.isfile(pdf_sti):
         raise FileNotFoundError(f"Finner ikke filen: {pdf_sti}")
     if not pdf_sti.lower().endswith(".pdf"):
@@ -189,21 +248,27 @@ def konverter(pdf_sti: str, docx_sti: str | None = None,
     fremdrift(5)
     digital = har_tekstlag(pdf_sti)
 
-    tmpdir = None
+    tmpdir = tempfile.mkdtemp(prefix="pdf2word_")
     arbeidsfil = pdf_sti
     ocr_brukt = False
+    fjernet = 0
 
     try:
         if not digital:
-            tmpdir = tempfile.mkdtemp(prefix="pdf2word_")
-            arbeidsfil = os.path.join(tmpdir, "ocr.pdf")
-            kjor_ocr(pdf_sti, arbeidsfil, status, fremdrift, fra=10, til=60)
+            ocr_fil = os.path.join(tmpdir, "ocr.pdf")
+            kjor_ocr(pdf_sti, ocr_fil, status, fremdrift, fra=10, til=55)
+            arbeidsfil = ocr_fil
             ocr_brukt = True
 
-        status("Bygger Word-dokument ...")
-        start = 60 if ocr_brukt else 10
-        fremdrift(start)
+        if fjern_marger:
+            status("Fjerner topp- og bunntekst ...")
+            renset = os.path.join(tmpdir, "renset.pdf")
+            fjernet = fjern_topp_bunn(arbeidsfil, renset)
+            if fjernet:
+                arbeidsfil = renset
+            fremdrift(60 if ocr_brukt else 20)
 
+        status("Bygger Word-dokument ...")
         if ocr_brukt:
             # pdf2docx ser ikke usynlig OCR-tekst - bygg dokumentet fra tekstlaget
             bygg_docx_fra_ocr(arbeidsfil, docx_sti)
@@ -216,10 +281,27 @@ def konverter(pdf_sti: str, docx_sti: str | None = None,
 
         fremdrift(100)
         status("Ferdig.")
-        return {"utfil": docx_sti, "ocr_brukt": ocr_brukt}
+        return {"utfil": docx_sti, "ocr_brukt": ocr_brukt,
+                "fjernet_blokker": fjernet}
     finally:
-        if tmpdir:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def kjor_i_prosess(ko, pdf_sti: str, fjern_marger: bool) -> None:
+    """
+    Kjøres i en egen prosess slik at minnekrasj eller heng ikke tar med seg
+    programvinduet. Kommuniserer via multiprocessing-kø.
+    """
+    try:
+        res = konverter(
+            pdf_sti,
+            status=lambda s: ko.put(("status", s)),
+            fremdrift=lambda p: ko.put(("fremdrift", p)),
+            fjern_marger=fjern_marger,
+        )
+        ko.put(("ferdig", res))
+    except Exception as e:
+        ko.put(("feil", str(e)))
 
 
 if __name__ == "__main__":

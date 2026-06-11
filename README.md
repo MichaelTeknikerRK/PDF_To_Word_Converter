@@ -51,3 +51,11 @@ build-windows.bat            Lokal bygging på Windows
 .github/workflows/bygg.yml   Automatisk bygging via GitHub Actions
 GUIDE-GITHUB-ACTIONS.md      Steg-for-steg-guide for bygging uten Windows-maskin
 ```
+
+## Innstillinger
+
+**Fjern topp- og bunntekst** (på som standard): fjerner automatisk linjer som gjentas øverst/nederst på sidene (dokumentnavn, «Konfidensielt» o.l.) og sidetall, slik at de ikke havner midt i brødteksten i Word. Skru av med avkrysningsboksen hvis du vil beholde dem.
+
+## Store dokumenter
+
+Konverteringen kjører i en egen prosess, så programmet fryser ikke og overlever selv om et svært stort eller komplekst dokument feiler – du får en feilmelding og kan avbryte underveis med Avbryt-knappen. Svært store dokumenter (hundrevis av sider, mye grafikk) kan likevel ta flere minutter; del dem gjerne opp.

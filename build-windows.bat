@@ -9,7 +9,7 @@ copy "C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata" tesseract\tessdat
 if not exist tesseract\tessdata\nor.traineddata (
   curl -L -o tesseract\tessdata\nor.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/nor.traineddata
 )
-pyinstaller --onefile --windowed --name "PDF_To_Word_Converter" --add-data "tesseract;tesseract" --collect-data tkinterdnd2 app.py
+pyinstaller --onefile --windowed --name "PDF_To_Word_Converter" --add-data "tesseract;tesseract" --collect-data tkinterdnd2 --collect-data customtkinter app.py
 echo.
 echo Ferdig! Programmet ligger i dist\PDF_To_Word_Converter.exe
 pause
