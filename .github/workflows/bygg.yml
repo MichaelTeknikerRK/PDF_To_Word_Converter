@@ -36,7 +36,7 @@ jobs:
         run: >
           pyinstaller --onefile --windowed --name "PDF_To_Word_Converter"
           --add-data "tesseract;tesseract"
-          --collect-data tkinterdnd2
+          --collect-data tkinterdnd2 --collect-data customtkinter
           app.py
 
       - name: Last opp ferdig program
